@@ -60,16 +60,15 @@ Use the -u flag to show all files unfiltered.`,
 
 			// Skip directories themselves
 			if d.IsDir() {
-				// Optionally skip specific directories like .git, vendor etc.
-				// if d.Name() == ".git" || d.Name() == "vendor" {
-				//  return filepath.SkipDir
-				// }
+				if d.Name() == ".git" || d.Name() == "vendor" || d.Name() == "__pycache__" || d.Name() == ".venv" || d.Name() == "venv" {
+					return filepath.SkipDir
+				}
 				return nil // Continue walking
 			}
 
 			// --- Filtering Logic ---
 			// Skip test files by default unless the -u flag is set
-			if !showUnfiltered && strings.HasSuffix(d.Name(), "_test.go") {
+			if !showUnfiltered && strings.HasSuffix(d.Name(), "test") || strings.HasSuffix(d.Name(), "go.mod") || strings.HasSuffix(d.Name(), "go.sum") {
 				return nil // Skip this file and continue walking
 			}
 

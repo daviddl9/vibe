@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/spf13/cobra"
 )
 
@@ -80,19 +81,39 @@ Use the -u flag to show all files unfiltered.`,
 				absPath = path // Use the relative path as fallback
 			}
 
-			// Print the header comment
-			fmt.Printf("// %s\n\n", absPath)
-
 			// Read file content
 			content, err := os.ReadFile(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
-				// Decide if you want to stop the whole process or just skip this file
+				fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path,
+					err)
 				return nil // Continue walking even if one file fails
 			}
 
-			// Print file content
-			fmt.Println(string(content))
+			// Create markdown-formatted content with file header and code block
+			fileExt := strings.ToLower(filepath.Ext(path))
+			if fileExt == "" {
+				fileExt = "txt" // Default to txt for files without extension
+			}
+			markdownContent := fmt.Sprintf("## %s\n\n```%s\n%s\n```\n",
+				absPath, fileExt[1:], string(content))
+
+			// Create renderer with auto style
+			renderer, err := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+			)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating markdown renderer: %v\nFalling back to raw output.\n", err)
+				fmt.Printf("// %s\n\n%s\n", absPath, string(content))
+			} else {
+				renderedOutput, err := renderer.Render(markdownContent)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Error rendering markdown: %v\nFalling back to raw output.\n", err)
+					fmt.Printf("// %s\n\n%s\n", absPath, string(content))
+				} else {
+					fmt.Print(renderedOutput)
+				}
+			}
+
 			fmt.Println("---") // Separator between files
 
 			return nil // Continue walking

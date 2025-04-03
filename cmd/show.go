@@ -8,6 +8,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/charmbracelet/glamour/ansi"          // Import ansi for StyleConfig
+	styles "github.com/charmbracelet/glamour/styles" // Import default styles
+	"github.com/muesli/termenv"                      // Import termenv for background detection
 	"github.com/spf13/cobra"
 )
 
@@ -18,10 +21,10 @@ var showCmd = &cobra.Command{
 	Use:   "show [directory]",
 	Short: "Traverse and display files in the target directory",
 	Long: `Traverses the specified directory recursively.
-For each Go file found, it prints the absolute file path as a comment
-followed by the file's content.
+For each file found, it prints the absolute file path as a comment
+followed by the file's content rendered as Markdown.
 
-By default, it hides Go test files (files ending in '_test.go').
+By default, it filters out certain files (e.g., _test.go, go.mod, go.sum).
 Use the -u flag to show all files unfiltered.`,
 	Args: cobra.ExactArgs(1), // Requires exactly one argument: the directory
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,30 +50,74 @@ Use the -u flag to show all files unfiltered.`,
 
 		fmt.Printf("Traversing directory: %s\n", absTargetDir)
 		if !showUnfiltered {
-			fmt.Println("Filtering out test files ('_test.go'). Use -u to show all.")
+			fmt.Println("Filtering out test, mod, and sum files. Use -u to show all.")
 		}
 		fmt.Println("---") // Separator
+
+		// --- Prepare Glamour Style ---
+		// 1. Determine base style (like WithAutoStyle)
+		var baseStyle ansi.StyleConfig
+		// Use TrueColor profile for best results, fallback can be handled by termenv
+		// Check if stdout is a terminal before checking background color
+		if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode()&os.ModeCharDevice) != 0 && termenv.HasDarkBackground() {
+			baseStyle = styles.DarkStyleConfig
+		} else {
+			// Default to LightStyle or NoTTY if not a terminal (though NoTTY might be better)
+			// Let's stick to light for consistency if not dark.
+			baseStyle = styles.LightStyleConfig
+			// You could also explicitly use styles.NoTTYStyleConfig if os.Stdout isn't a TTY
+			// if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) == 0 {
+			//  baseStyle = styles.NoTTYStyleConfig
+			// }
+		}
+
+		// 2. Modify the style to remove margins
+		zeroMargin := uint(0)
+		// Ensure key block elements have no margin for left-alignment
+		// Note: Margin is *uint, so we need the address of zeroMargin
+		baseStyle.Document.Margin = &zeroMargin
+		baseStyle.Heading.Margin = &zeroMargin
+		baseStyle.CodeBlock.Margin = &zeroMargin
+		baseStyle.List.Margin = &zeroMargin
+		baseStyle.Paragraph.Margin = &zeroMargin
+		baseStyle.BlockQuote.Margin = &zeroMargin
+		baseStyle.Table.Margin = &zeroMargin
+		// --- End Prepare Glamour Style ---
 
 		// Walk the directory
 		err = filepath.WalkDir(absTargetDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
-				// Report errors during walk (e.g., permission issues) but continue if possible
 				fmt.Fprintf(os.Stderr, "Error accessing path %q: %v\n", path, err)
-				return err // Or return nil to try to continue
+				// Decide whether to stop or continue. Returning err stops. Returning nil continues.
+				// Let's try to continue.
+				return nil
 			}
 
-			// Skip directories themselves
+			// Skip directories themselves, and specific directories
 			if d.IsDir() {
-				if d.Name() == ".git" || d.Name() == "vendor" || d.Name() == "__pycache__" || d.Name() == ".venv" || d.Name() == "venv" {
+				// Skip common clutter/dependency directories
+				dirName := d.Name()
+				if dirName == ".git" || dirName == "vendor" || strings.HasPrefix(dirName, ".") ||
+					dirName == "node_modules" || dirName == "__pycache__" || dirName == "target" ||
+					dirName == "build" || dirName == "dist" {
+					// fmt.Fprintf(os.Stderr, "Skipping directory: %s\n", path) // Optional debug info
 					return filepath.SkipDir
 				}
-				return nil // Continue walking
+				return nil // Continue walking into other directories
 			}
 
 			// --- Filtering Logic ---
-			// Skip test files by default unless the -u flag is set
-			if !showUnfiltered && strings.HasSuffix(d.Name(), "test") || strings.HasSuffix(d.Name(), "go.mod") || strings.HasSuffix(d.Name(), "go.sum") {
-				return nil // Skip this file and continue walking
+			fileName := d.Name()
+			// Skip specific file types by default unless the -u flag is set
+			if !showUnfiltered {
+				// Add more file types/patterns to skip here if needed
+				if strings.HasSuffix(fileName, "_test.go") ||
+					fileName == "go.mod" || fileName == "go.sum" ||
+					fileName == "LICENSE" || strings.HasSuffix(fileName, ".md") || // Skip READMEs etc.
+					strings.HasPrefix(fileName, ".") { // Skip hidden files
+					// fmt.Fprintf(os.Stderr, "Skipping filtered file: %s\n", path) // Optional debug info
+					return nil // Skip this file and continue walking
+				}
 			}
 
 			// --- Process File ---
@@ -84,30 +131,44 @@ Use the -u flag to show all files unfiltered.`,
 			// Read file content
 			content, err := os.ReadFile(path)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path,
-					err)
+				fmt.Fprintf(os.Stderr, "Error reading file %s: %v\n", path, err)
 				return nil // Continue walking even if one file fails
 			}
 
 			// Create markdown-formatted content with file header and code block
 			fileExt := strings.ToLower(filepath.Ext(path))
-			if fileExt == "" {
-				fileExt = "txt" // Default to txt for files without extension
+			lang := ""
+			if len(fileExt) > 1 {
+				lang = fileExt[1:] // Get extension without the dot for ```lang
 			}
-			markdownContent := fmt.Sprintf("## %s\n\n```%s\n%s\n```\n",
-				absPath, fileExt[1:], string(content))
+			if lang == "" {
+				lang = "text" // Default language for syntax highlighting
+			}
 
-			// Create renderer with auto style
+			// Use filepath.Base to just show the filename in the header, keeps it cleaner
+			// markdownContent := fmt.Sprintf("## %s\n\n```%s\n%s\n```\n",
+			//  filepath.Base(absPath), lang, string(content))
+			// Or keep the full path if preferred:
+			markdownContent := fmt.Sprintf("## %s\n\n```%s\n%s\n```\n",
+				absPath, lang, string(content))
+
+			// Create renderer with the MODIFIED zero-margin style
+			// Renderer creation is relatively cheap, but could be moved outside the loop
+			// if performance becomes an issue on huge numbers of files.
 			renderer, err := glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
+				glamour.WithStyles(baseStyle), // Use the modified style
+				glamour.WithWordWrap(0),       // Keep word wrap disabled
+				// glamour.WithEmoji(),        // Uncomment if you want emojis
 			)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error creating markdown renderer: %v\nFalling back to raw output.\n", err)
+				// Fallback to simple output
 				fmt.Printf("// %s\n\n%s\n", absPath, string(content))
 			} else {
 				renderedOutput, err := renderer.Render(markdownContent)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error rendering markdown: %v\nFalling back to raw output.\n", err)
+					fmt.Fprintf(os.Stderr, "Error rendering markdown for %s: %v\nFalling back to raw output.\n", absPath, err)
+					// Fallback to simple output
 					fmt.Printf("// %s\n\n%s\n", absPath, string(content))
 				} else {
 					fmt.Print(renderedOutput)
@@ -132,5 +193,5 @@ func init() {
 	rootCmd.AddCommand(showCmd)
 
 	// Define the local flag for the show command
-	showCmd.Flags().BoolVarP(&showUnfiltered, "unfiltered", "u", false, "Show all files, including test files")
+	showCmd.Flags().BoolVarP(&showUnfiltered, "unfiltered", "u", false, "Show all files, including normally filtered ones")
 }

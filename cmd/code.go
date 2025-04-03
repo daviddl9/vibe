@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/glamour"
 	"github.com/spf13/cobra"
 )
 
@@ -355,9 +354,6 @@ Do not add extraneous conversation or introductory/concluding remarks outside of
 
 		// --- 7. Display Result ---
 		fmt.Println("\n--- LLM Response ---") // Print header to Stdout
-
-		var finalContent strings.Builder // Use a builder to collect full content for rendering
-
 		if streamOutput {
 			// == Streaming Logic ==
 			scanner := bufio.NewScanner(resp.Body)
@@ -389,8 +385,7 @@ Do not add extraneous conversation or introductory/concluding remarks outside of
 
 					if len(chunk.Choices) > 0 {
 						contentDelta := chunk.Choices[0].Delta.Content
-						// fmt.Print(contentDelta)                // Print raw delta to stdout immediately
-						finalContent.WriteString(contentDelta) // Append to builder for later rendering
+						fmt.Print(contentDelta) // Print raw delta to stdout immediately
 					}
 				} // End if "data: "
 			} // End scanner loop
@@ -402,7 +397,7 @@ Do not add extraneous conversation or introductory/concluding remarks outside of
 			fmt.Println() // Add a newline after streaming is done / before rendering
 
 			if streamErrorOccurred {
-				fmt.Fprintln(os.Stderr, "Note: Errors occurred during streaming. Rendered output may be incomplete.")
+				fmt.Fprintln(os.Stderr, "Note: Errors occurred during streaming. Output may be incomplete.")
 			}
 
 		} else {
@@ -424,35 +419,9 @@ Do not add extraneous conversation or introductory/concluding remarks outside of
 			if len(openRouterResp.Choices) == 0 || openRouterResp.Choices[0].Message.Content == "" {
 				fmt.Fprintln(os.Stderr, "Warning: Received an empty non-streaming response from the LLM.")
 			} else {
-				finalContent.WriteString(openRouterResp.Choices[0].Message.Content)
+				content := openRouterResp.Choices[0].Message.Content
+				fmt.Println(content) // Print raw content directly
 			}
-			// Optionally print non-streaming usage stats here if needed
-		}
-
-		// --- Render Collected Content with Glamour ---
-		if finalContent.Len() > 0 {
-			renderer, err := glamour.NewTermRenderer(
-				glamour.WithAutoStyle(),
-				// glamour.WithWordWrap(100), // Optional
-			)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error creating markdown renderer: %v\nFalling back to raw output.\n", err)
-				fmt.Println("--- Raw Output Fallback ---")
-				fmt.Println(strings.TrimSpace(finalContent.String()))
-				fmt.Println("-------------------------")
-			} else {
-				renderedOutput, err := renderer.Render(finalContent.String())
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error rendering markdown: %v\nFalling back to raw output.\n", err)
-					fmt.Println("--- Raw Output Fallback ---")
-					fmt.Println(strings.TrimSpace(finalContent.String()))
-					fmt.Println("-------------------------")
-				} else {
-					fmt.Println(renderedOutput) // Print rendered output to Stdout
-				}
-			}
-		} else {
-			fmt.Println("(No content received or processed from LLM)")
 		}
 
 		fmt.Println("--------------------") // Final separator on Stdout

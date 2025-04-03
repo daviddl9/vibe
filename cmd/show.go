@@ -12,6 +12,8 @@ import (
 
 var (
 	showUnfiltered bool // Flag variable for unfiltered listing
+	noRecursive    bool // Flag variable for non-recursive traversal
+	verbose        bool // Flag variable for verbose output
 )
 
 // showCmd represents the show command
@@ -22,7 +24,9 @@ var showCmd = &cobra.Command{
 For each file found, it prints the absolute file path followed by the file's content.
 
 By default, it filters out certain files (e.g., _test.go, go.mod, go.sum).
-Use the -u flag to show all files unfiltered.`,
+Use the -u flag to show all files unfiltered.
+Use the -n flag to only show files in the specified directory without going into subdirectories.
+Use the -v flag to show verbose output.`,
 	Args: cobra.ExactArgs(1), // Requires exactly one argument: the directory
 	RunE: func(cmd *cobra.Command, args []string) error {
 		targetDir := args[0]
@@ -46,8 +50,11 @@ Use the -u flag to show all files unfiltered.`,
 		}
 
 		fmt.Printf("Traversing directory: %s\n", absTargetDir)
-		if !showUnfiltered {
+		if !showUnfiltered && verbose {
 			fmt.Println("Filtering out test, mod, sum, LICENSE, hidden, and markdown files. Use -u to show all.")
+		}
+		if noRecursive && verbose {
+			fmt.Println("Non-recursive mode: only showing files in the specified directory.")
 		}
 		fmt.Println("---") // Separator
 
@@ -60,6 +67,11 @@ Use the -u flag to show all files unfiltered.`,
 
 			// Skip directories
 			if d.IsDir() {
+				// If in non-recursive mode, skip all subdirectories
+				if noRecursive && path != absTargetDir {
+					return filepath.SkipDir
+				}
+
 				dirName := d.Name()
 				if dirName == ".git" || dirName == "vendor" || strings.HasPrefix(dirName, ".") ||
 					dirName == "node_modules" || dirName == "__pycache__" || dirName == "target" ||
@@ -114,4 +126,5 @@ func init() {
 
 	// Define flags for the show command
 	showCmd.Flags().BoolVarP(&showUnfiltered, "unfiltered", "u", false, "Show all files, including normally filtered ones")
+	showCmd.Flags().BoolVarP(&noRecursive, "no-recursive", "n", false, "Only show files in the specified directory without going into subdirectories")
 }

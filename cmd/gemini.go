@@ -137,6 +137,7 @@ Filtering logic is the same as 'vibe show' default.`,
 			filesCollected++
 			return nil
 		}) // End WalkDir func
+		contextBuilder.WriteString("Take on the persona of a distinguished software engineer.")
 
 		if walkErr != nil {
 			return fmt.Errorf("error during directory traversal of %q: %w", absTargetDir, walkErr)

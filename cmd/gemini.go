@@ -112,7 +112,8 @@ Filtering logic is the same as 'vibe show' default.`,
 			isSumFile := fileName == "go.sum"
 			isLicense := fileName == "LICENSE"
 			isMarkdown := strings.HasSuffix(strings.ToLower(fileName), ".md")
-			if isTestFile || isModFile || isSumFile || isLicense || isMarkdown || isHidden {
+			hasNoExtension := !strings.Contains(fileName, ".")
+			if isTestFile || isModFile || isSumFile || isLicense || isMarkdown || isHidden || hasNoExtension {
 				return nil
 			}
 

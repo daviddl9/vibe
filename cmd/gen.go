@@ -37,21 +37,131 @@ var genCmd = &cobra.Command{
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			client := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
-			resp, err := client.CreateChatCompletion(context.Background(), openai.ChatCompletionRequest{
-				Model: openai.GPT4oLatest,
-				Messages: []openai.ChatCompletionMessage{
-					{Role: "user", Content: string(prompt)},
-				},
-			})
+
+			apiKey := os.Getenv("OPENAI_API_KEY")
+			if apiKey == "" {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("OPENAI_API_KEY environment variable not set")}
+				return
+			}
+
+			requestBody := map[string]interface{}{
+				"model": "gpt-4.1", // Or "gpt-4.1" if preferred and available
+				"input": string(prompt),
+				// Add other parameters like temperature, max_output_tokens if needed
+			}
+			requestBodyBytes, err := json.Marshal(requestBody)
+			if err != nil {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("failed to marshal request body: %w", err)}
+				return
+			}
+
+			req, err := http.NewRequest("POST", "https://api.openai.com/v1/responses", bytes.NewBuffer(requestBodyBytes))
+			if err != nil {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("failed to create request: %w", err)}
+				return
+			}
+
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			req.Header.Set("Content-Type", "application/json")
+
+			client := &http.Client{Timeout: 20 * time.Minute} // Reuse timeout logic
+			resp, err := client.Do(req)
+			if err != nil {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("failed to send request: %w", err)}
+				return
+			}
+			defer resp.Body.Close()
+
+			responseBodyBytes, err := io.ReadAll(resp.Body)
+			if err != nil {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("failed to read response body: %w", err)}
+				return
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(responseBodyBytes))}
+				return
+			}
+
+			// Define a struct to parse the relevant part of the response
+			var responseBody struct {
+				Output []struct {
+					Content []struct {
+						Text string `json:"text"`
+					} `json:"content"`
+				} `json:"output"`
+				Error *struct { // Check for API errors in the response body
+					Message string `json:"message"`
+					Type    string `json:"type"`
+					Code    string `json:"code"` // Code can be string or int
+				} `json:"error"`
+			}
+
+			err = json.Unmarshal(responseBodyBytes, &responseBody)
+			if err != nil {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("failed to unmarshal response body: %w", err)}
+				return
+			}
+
+			// Check for errors returned in the JSON body
+			if responseBody.Error != nil {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("OpenAI API error (%s): %s", responseBody.Error.Code, responseBody.Error.Message)}
+				return
+			}
+
+			// Extract the text content
+			var responseText string
+			if len(responseBody.Output) > 0 && len(responseBody.Output[0].Content) > 0 {
+				responseText = responseBody.Output[0].Content[0].Text
+			} else {
+				results <- struct {
+					model string
+					resp  string
+					err   error
+				}{model: "OpenAI", err: fmt.Errorf("no content found in response structure")}
+				return
+			}
+
 			results <- struct {
 				model string
 				resp  string
 				err   error
 			}{
 				model: "OpenAI",
-				resp:  resp.Choices[0].Message.Content,
-				err:   err,
+				resp:  responseText,
+				err:   nil, // Explicitly nil on success
 			}
 		}()
 

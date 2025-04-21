@@ -11,9 +11,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/charmbracelet/glamour"
 	"github.com/sashabaranov/go-openai"
 	"github.com/spf13/cobra"
 )
+
+var raw bool
 
 var genCmd = &cobra.Command{
 	Use:   "gen <prompt-file>",
@@ -429,7 +432,19 @@ var genCmd = &cobra.Command{
 				fmt.Printf("%s error: %v\n", result.model, result.err)
 				continue
 			}
-			fmt.Printf("\n=== %s Response ===\n%s\n", result.model, result.resp)
+			md := fmt.Sprintf("### %s Response\n\n```\n%s\n```", result.model, result.resp)
+
+			if raw {
+				fmt.Println(md)
+			} else {
+				out, err := glamour.Render(md, "dark")
+				if err != nil {
+					fmt.Println(md) // fallback to raw markdown
+				} else {
+					fmt.Println(out)
+				}
+			}
+
 			successfulResponses = append(successfulResponses, struct {
 				model string
 				resp  string
@@ -438,15 +453,22 @@ var genCmd = &cobra.Command{
 
 		if len(successfulResponses) > 0 {
 			fmt.Println("\n=== Merging Responses ===")
-			// Create a client specifically for merging, or reuse if appropriate
-			// Note: Reusing the OpenAI client from the goroutine might be complex due to scope.
-			// Creating a new one here is simpler for this example.
 			mergeClient := openai.NewClient(os.Getenv("OPENAI_API_KEY"))
 			mergedResponse, err := mergeResponses(mergeClient, successfulResponses)
 			if err != nil {
 				fmt.Printf("Error merging responses: %v\n", err)
 			} else {
-				fmt.Println("\n=== Merged Response ===\n", mergedResponse)
+				mergedMD := fmt.Sprintf("## Merged Response\n\n```\n%s\n```", mergedResponse)
+				if raw {
+					fmt.Println(mergedMD)
+				} else {
+					out, err := glamour.Render(mergedMD, "dark")
+					if err != nil {
+						fmt.Println(mergedMD)
+					} else {
+						fmt.Println(out)
+					}
+				}
 			}
 		} else {
 			fmt.Println("\nNo successful responses to merge.")
@@ -483,4 +505,5 @@ func mergeResponses(client *openai.Client, responses []struct {
 
 func init() {
 	rootCmd.AddCommand(genCmd)
+	genCmd.Flags().BoolVarP(&raw, "raw", "r", false, "Print raw markdown output without formatting")
 }
